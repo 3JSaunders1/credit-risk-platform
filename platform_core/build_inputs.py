@@ -1,9 +1,10 @@
 """
 Collect artifacts from the two projects into data/, validated against their contracts.
 
-- portfolio.parquet: 2015 loans with recalibrated PDs and loan amounts (credit default model)
-- loss_params.json:  LGD and EAD ratio estimated on 2012-2014 charge-offs only (no look-ahead)
-- scenarios.csv:     scenario cumulative losses (macro lab)
+- portfolio.parquet:   2015 loans with recalibrated PDs and loan amounts (credit default model)
+- loss_params.json:    LGD and EAD ratio estimated on 2012-2014 charge-offs only (no look-ahead)
+- scenarios.csv:       scenario cumulative losses (macro lab)
+- realized_2015.json:  actual 2015 outcomes, for validation display only (never used in stress results)
 
 Project locations default to the Desktop and can be overridden with
 CREDIT_DEFAULT_DIR and MACRO_LAB_DIR.
@@ -29,6 +30,10 @@ PD_COLUMN = "pd_logit_recal"
 log = get_logger(__name__)
 
 
+def load_components() -> pd.DataFrame:
+    return pd.read_csv(CREDIT_DIR / "reports" / "figures" / "expected_loss_components.csv").set_index("component")
+
+
 def build_portfolio() -> pd.DataFrame:
     preds = pd.read_parquet(CREDIT_DIR / "data" / "processed" / "test_predictions.parquet")
     test = pd.read_parquet(CREDIT_DIR / "data" / "processed" / "test.parquet")
@@ -49,8 +54,7 @@ def build_portfolio() -> pd.DataFrame:
     return validate_portfolio(portfolio)
 
 
-def build_loss_params() -> dict:
-    comp = pd.read_csv(CREDIT_DIR / "reports" / "figures" / "expected_loss_components.csv").set_index("component")
+def build_loss_params(comp: pd.DataFrame) -> dict:
     params = {
         "lgd": float(comp.loc["LGD", "assumed"]),
         "ead_ratio": float(comp.loc["EAD ratio", "assumed"]),
@@ -60,6 +64,16 @@ def build_loss_params() -> dict:
     return validate_loss_params(params)
 
 
+def build_realized(portfolio: pd.DataFrame, comp: pd.DataFrame) -> dict:
+    """Actual 2015 outcomes: shown for validation, never used to compute stress results."""
+    defaulted = portfolio.loc[portfolio["default_flag"] == 1, "loan_amnt"].sum()
+    return {
+        "default_rate": float(portfolio["default_flag"].mean()),
+        "loss": float(defaulted * comp.loc["EAD ratio", "actual"] * comp.loc["LGD", "actual"]),
+        "note": "2015 realized outcomes, for validation display only; never used in stress results",
+    }
+
+
 def build_scenarios() -> pd.DataFrame:
     scen = pd.read_csv(MACRO_DIR / "reports" / "figures" / "scenario_results.csv")
     return validate_scenarios(scen)
@@ -67,16 +81,23 @@ def build_scenarios() -> pd.DataFrame:
 
 def main():
     DATA.mkdir(exist_ok=True)
+    comp = load_components()
+
     portfolio = build_portfolio()
     portfolio.to_parquet(DATA / "portfolio.parquet", index=False)
     log.info("Portfolio: %d loans, $%.2fB originated, mean PD %.2f%%",
              len(portfolio), portfolio["loan_amnt"].sum() / 1e9, portfolio["pd"].mean() * 100)
 
-    params = build_loss_params()
+    params = build_loss_params(comp)
     validate_no_lookahead(portfolio, params)
     (DATA / "loss_params.json").write_text(json.dumps(params, indent=2))
     log.info("Loss parameters: LGD %.1f%%, EAD ratio %.1f%%, estimated through %s (no look-ahead)",
              params["lgd"] * 100, params["ead_ratio"] * 100, params["estimated_through"])
+
+    realized = build_realized(portfolio, comp)
+    (DATA / "realized_2015.json").write_text(json.dumps(realized, indent=2))
+    log.info("Realized 2015 (validation only): default rate %.2f%%, loss $%.1fM",
+             realized["default_rate"] * 100, realized["loss"] / 1e6)
 
     scen = build_scenarios()
     scen.to_csv(DATA / "scenarios.csv", index=False)
