@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from platform_core.contracts import validate_loss_params, validate_portfolio, validate_scenarios
+from platform_core.contracts import (validate_loss_params, validate_no_lookahead,
+                                     validate_portfolio, validate_scenarios)
 from platform_core.logging_utils import get_logger, run_main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +54,7 @@ def build_loss_params() -> dict:
     params = {
         "lgd": float(comp.loc["LGD", "assumed"]),
         "ead_ratio": float(comp.loc["EAD ratio", "assumed"]),
+        "estimated_through": "2014-12-31",
         "source": "credit default model, estimated on 2012-2014 charge-offs (no 2015 information)",
     }
     return validate_loss_params(params)
@@ -71,8 +73,10 @@ def main():
              len(portfolio), portfolio["loan_amnt"].sum() / 1e9, portfolio["pd"].mean() * 100)
 
     params = build_loss_params()
+    validate_no_lookahead(portfolio, params)
     (DATA / "loss_params.json").write_text(json.dumps(params, indent=2))
-    log.info("Loss parameters: LGD %.1f%%, EAD ratio %.1f%%", params["lgd"] * 100, params["ead_ratio"] * 100)
+    log.info("Loss parameters: LGD %.1f%%, EAD ratio %.1f%%, estimated through %s (no look-ahead)",
+             params["lgd"] * 100, params["ead_ratio"] * 100, params["estimated_through"])
 
     scen = build_scenarios()
     scen.to_csv(DATA / "scenarios.csv", index=False)

@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from platform_core.contracts import validate_loss_params, validate_portfolio, validate_scenarios
+from platform_core.contracts import (validate_loss_params, validate_no_lookahead,
+                                     validate_portfolio, validate_scenarios)
 from platform_core.logging_utils import get_logger, run_main
 from platform_core.stress import run_stress
 
@@ -22,6 +23,7 @@ def main():
     portfolio = validate_portfolio(pd.read_parquet(DATA / "portfolio.parquet"))
     scenarios = validate_scenarios(pd.read_csv(DATA / "scenarios.csv"))
     params = validate_loss_params(json.loads((DATA / "loss_params.json").read_text()))
+    validate_no_lookahead(portfolio, params)
 
     results = run_stress(portfolio, scenarios, params)
     shown = results.assign(

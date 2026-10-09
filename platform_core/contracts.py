@@ -2,8 +2,9 @@
 Data contracts between the two projects.
 
 Every artifact is validated before use, so an upstream change (a renamed column,
-an out-of-range PD, a missing baseline scenario) fails loudly instead of silently
-producing wrong stress results.
+an out-of-range PD, a missing baseline scenario, or loss parameters estimated on
+the portfolio's own outcomes) fails loudly instead of silently producing wrong
+stress results.
 """
 import pandas as pd
 
@@ -57,3 +58,20 @@ def validate_loss_params(params: dict) -> dict:
         if not 0 < params[key] <= 1:
             raise ContractError(f"'{key}' must be in (0, 1], got {params[key]}")
     return params
+
+
+def validate_no_lookahead(portfolio: pd.DataFrame, params: dict) -> None:
+    """Loss parameters must be estimated only on data that ends before the portfolio's vintage.
+
+    Using LGD or EAD measured on the portfolio's own outcomes would leak future
+    information into the stress results.
+    """
+    if "estimated_through" not in params:
+        raise ContractError("loss parameters must record 'estimated_through' (last date of estimation data)")
+    if "issue_date" not in portfolio.columns:
+        raise ContractError("portfolio needs 'issue_date' to check temporal integrity")
+    cutoff = pd.Timestamp(params["estimated_through"])
+    first_loan = pd.to_datetime(portfolio["issue_date"]).min()
+    if cutoff >= first_loan:
+        raise ContractError(f"loss parameters estimated through {cutoff.date()} overlap the portfolio, "
+                            f"which starts {first_loan.date()} (look-ahead)")
